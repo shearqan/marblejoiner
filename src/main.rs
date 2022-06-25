@@ -95,7 +95,7 @@ struct MainState {
 struct ChannelMarbleState {
     buffer: Vec<bool>,
     current_position: usize,
-    last_play: Option<Instant>,
+    next_play: Instant,
 }
 
 #[tokio::main]
@@ -132,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
     let client = Box::new(client);
 
     let join_handle = tokio::spawn(async move {
-        for (channel, _) in &main_state.channel_states {
+        for channel in main_state.channel_states.keys() {
             client.join(channel.to_string()).unwrap();
         }
 
@@ -161,7 +161,7 @@ impl MainState {
         if channel_state.is_time_to_play(self.delay)
             && channel_state.is_treshhold_reached(self.treshhold)
         {
-            channel_state.last_play = Some(Instant::now());
+            channel_state.next_play = Instant::now().add(self.delay);
             thread::sleep(self.wait);
             client
                 .say(message.channel_login.to_owned(), self.play_message.to_owned())
@@ -176,12 +176,12 @@ impl ChannelMarbleState {
         ChannelMarbleState {
             buffer: iter::repeat(false).take(buffer_size).collect(),
             current_position: 0,
-            last_play: None,
+            next_play: Instant::now(),
         }
     }
 
     fn is_time_to_play(self: &ChannelMarbleState, delay: Duration) -> bool {
-        self.last_play.is_none() || self.last_play.unwrap().add(delay) < Instant::now()
+        self.next_play < Instant::now()
     }
 
     fn is_treshhold_reached(self: &ChannelMarbleState, treshhold: usize) -> bool {
