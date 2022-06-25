@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use twitch_irc::{
     login::{CredentialsPair, StaticLoginCredentials},
-    message::{PrivmsgMessage, ServerMessage},
+    message::ServerMessage,
     ClientConfig, SecureTCPTransport, TwitchIRCClient,
 };
 
@@ -56,7 +56,7 @@ struct Cli {
         long,
         default_value = "!play >:(",
         value_parser,
-        help= "The message the app joins the race for you with"
+        help = "The message the app joins the race for you with"
     )]
     play_message: String,
 
@@ -80,7 +80,7 @@ struct Cli {
 }
 
 #[derive(Debug)]
-struct MainState {
+struct AppParams {
     buffer_size: usize,
     treshhold: usize,
     delay: Duration,
@@ -88,11 +88,11 @@ struct MainState {
     play_message: String,
     login: String,
     oauth: String,
-    channel_states: HashMap<String, ChannelMarbleState>,
 }
 
 #[derive(Debug)]
 struct ChannelMarbleState {
+    login: String,
     buffer: Vec<bool>,
     current_position: usize,
     next_play: Instant,
@@ -101,12 +101,12 @@ struct ChannelMarbleState {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
-    let marble_states: HashMap<String, ChannelMarbleState> = args
+    let mut marble_states: HashMap<String, ChannelMarbleState> = args
         .channels
         .into_iter()
-        .map(|channel| (channel, ChannelMarbleState::new(args.buffer_size)))
+        .map(|channel| (channel.to_owned(), ChannelMarbleState::new(channel, args.buffer_size)))
         .collect();
-    let mut main_state = MainState {
+    let app_params = AppParams {
         buffer_size: args.buffer_size,
         treshhold: args.treshhold,
         delay: Duration::from_secs(args.delay),
@@ -114,13 +114,12 @@ async fn main() -> anyhow::Result<()> {
         play_message: args.play_message,
         login: args.login,
         oauth: args.oauth.replacen("oauth:", "", 1),
-        channel_states: marble_states,
     };
 
     let credentials = StaticLoginCredentials {
         credentials: CredentialsPair {
-            login: main_state.login.to_owned(),
-            token: Some(main_state.oauth.to_owned()),
+            login: app_params.login.to_owned(),
+            token: Some(app_params.oauth.to_owned()),
         },
     };
     let config = ClientConfig {
@@ -132,14 +131,14 @@ async fn main() -> anyhow::Result<()> {
     let client = Box::new(client);
 
     let join_handle = tokio::spawn(async move {
-        for channel in main_state.channel_states.keys() {
+        for channel in marble_states.keys() {
             client.join(channel.to_string()).unwrap();
         }
 
         while let Some(message) = incoming_messages.recv().await {
             println!("Received message: {:?}", message);
             println!();
-            let _ = handle_new_message(&message, &mut main_state, &client).await;
+            let _ = process_message(&app_params, &mut marble_states, &message, &client).await;
         }
     });
 
@@ -148,57 +147,58 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-impl MainState {
-    pub async fn process_message(
-        self: &mut MainState,
-        message: &PrivmsgMessage,
-        client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
-    ) -> anyhow::Result<()> {
-        let channel_state = self.channel_states.get_mut(&message.channel_login).unwrap();
-        channel_state.current_position = (channel_state.current_position + 1) % self.buffer_size;
-        channel_state.buffer[channel_state.current_position] =
-            message.message_text.starts_with("!play");
-        if channel_state.is_time_to_play(self.delay)
-            && channel_state.is_treshhold_reached(self.treshhold)
-        {
-            channel_state.next_play = Instant::now().add(self.delay);
-            thread::sleep(self.wait);
-            client
-                .say(message.channel_login.to_owned(), self.play_message.to_owned())
+async fn process_message(
+    app_params: &AppParams,
+    marble_states: &mut HashMap<String, ChannelMarbleState>,
+    server_message: &ServerMessage,
+    client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
+) -> anyhow::Result<()> {
+    match server_message {
+        ServerMessage::Privmsg(message) => {
+            marble_states
+                .get_mut(&message.channel_login)
+                .unwrap()
+                .process_message(app_params, &message.message_text, client)
                 .await?;
         }
-        Ok(())
+        _ => {}
     }
+
+    Ok(())
 }
 
 impl ChannelMarbleState {
-    fn new(buffer_size: usize) -> ChannelMarbleState {
+    fn new(login: String, buffer_size: usize) -> ChannelMarbleState {
         ChannelMarbleState {
+            login,
             buffer: iter::repeat(false).take(buffer_size).collect(),
             current_position: 0,
             next_play: Instant::now(),
         }
     }
 
-    fn is_time_to_play(self: &ChannelMarbleState, delay: Duration) -> bool {
+    async fn process_message(
+        self: &mut ChannelMarbleState,
+        app_params: &AppParams,
+        message: &str,
+        client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
+    ) -> anyhow::Result<()> {
+        self.current_position = (self.current_position + 1) % app_params.buffer_size;
+        self.buffer[self.current_position] = message.starts_with("!play");
+        if self.is_time_to_play() && self.is_treshhold_reached(app_params) {
+            self.next_play = Instant::now().add(app_params.delay);
+            thread::sleep(app_params.wait);
+            client.say(self.login.to_owned(), app_params.play_message.to_owned()).await?;
+        }
+
+        Ok(())
+    }
+
+    fn is_time_to_play(self: &ChannelMarbleState) -> bool {
         self.next_play < Instant::now()
     }
 
-    fn is_treshhold_reached(self: &ChannelMarbleState, treshhold: usize) -> bool {
-        self.buffer.iter().filter(|x| **x).count() >= treshhold
+    fn is_treshhold_reached(self: &ChannelMarbleState, app_params: &AppParams) -> bool {
+        self.buffer.iter().filter(|x| **x).count() >= app_params.treshhold
     }
-}
-
-async fn handle_new_message(
-    server_message: &ServerMessage,
-    main_state: &mut MainState,
-    client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
-) -> anyhow::Result<()> {
-    match server_message {
-        ServerMessage::Privmsg(message) => {
-            main_state.process_message(message, client).await?;
-        }
-        _ => {}
-    }
-    Ok(())
 }
