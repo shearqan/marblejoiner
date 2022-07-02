@@ -187,6 +187,7 @@ impl ChannelMarbleState {
         self.buffer[self.current_position] = message.starts_with("!play");
         if self.is_time_to_play() && self.is_treshhold_reached(app_params) {
             self.next_play = Instant::now().add(app_params.delay);
+            self.clear_buffer();
             thread::sleep(app_params.wait);
             client.say(self.login.to_owned(), app_params.play_message.to_owned()).await?;
         }
@@ -200,5 +201,11 @@ impl ChannelMarbleState {
 
     fn is_treshhold_reached(self: &ChannelMarbleState, app_params: &AppParams) -> bool {
         self.buffer.iter().filter(|x| **x).count() >= app_params.treshhold
+    }
+
+    fn clear_buffer(self: &mut ChannelMarbleState) {
+        for i in 0..self.buffer.len() {
+            self.buffer[i] = false;
+        }
     }
 }
