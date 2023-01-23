@@ -104,7 +104,12 @@ async fn main() -> anyhow::Result<()> {
     let mut marble_states: HashMap<String, ChannelMarbleState> = args
         .channels
         .into_iter()
-        .map(|channel| (channel.to_owned(), ChannelMarbleState::new(channel, args.buffer_size)))
+        .map(|channel| {
+            (
+                channel.to_owned(),
+                ChannelMarbleState::new(channel, args.buffer_size),
+            )
+        })
         .collect();
     let app_params = AppParams {
         buffer_size: args.buffer_size,
@@ -184,12 +189,15 @@ impl ChannelMarbleState {
         client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
     ) -> anyhow::Result<()> {
         self.current_position = (self.current_position + 1) % app_params.buffer_size;
-        self.buffer[self.current_position] = message.starts_with("!play");
-        if self.is_time_to_play() && self.is_treshhold_reached(app_params) {
+        let is_play_message = message.starts_with("!play");
+        self.buffer[self.current_position] = is_play_message;
+        if is_play_message && self.is_time_to_play() && self.is_treshhold_reached(app_params) {
             self.next_play = Instant::now().add(app_params.delay);
             self.clear_buffer();
             thread::sleep(app_params.wait);
-            client.say(self.login.to_owned(), app_params.play_message.to_owned()).await?;
+            client
+                .say(self.login.to_owned(), app_params.play_message.to_owned())
+                .await?;
         }
 
         Ok(())
