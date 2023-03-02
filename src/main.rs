@@ -195,11 +195,20 @@ impl ChannelMarbleState {
             self.next_play = Instant::now().add(app_params.delay);
             self.clear_buffer();
             thread::sleep(app_params.wait);
-            client
-                .say(self.login.to_owned(), app_params.play_message.to_owned())
-                .await?;
+            self.say_play(client, app_params).await?;
         }
 
+        Ok(())
+    }
+
+    async fn say_play(
+        self: &mut ChannelMarbleState,
+        client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
+        app_params: &AppParams,
+    ) -> anyhow::Result<()> {
+        client
+            .say(self.login.to_owned(), app_params.play_message.to_owned())
+            .await?;
         Ok(())
     }
 
