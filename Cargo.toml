@@ -7,6 +7,5 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.19.2", features = ["rt-multi-thread", "macros"] }
-anyhow = "1.0.58"
 twitch-irc = "4.0.0"
 clap = { version = "3.2.6", features = ["derive"] }

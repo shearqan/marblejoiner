@@ -99,7 +99,7 @@ struct ChannelMarbleState {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let args = Cli::parse();
     let mut marble_states: HashMap<String, ChannelMarbleState> = args
         .channels
@@ -149,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
 
     join_handle.await.unwrap();
 
-    Ok(())
+    return;
 }
 
 async fn process_message(
@@ -157,19 +157,17 @@ async fn process_message(
     marble_states: &mut HashMap<String, ChannelMarbleState>,
     server_message: &ServerMessage,
     client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
-) -> anyhow::Result<()> {
+) {
     match server_message {
         ServerMessage::Privmsg(message) => {
             marble_states
                 .get_mut(&message.channel_login)
                 .unwrap()
                 .process_message(app_params, &message.message_text, client)
-                .await?;
+                .await;
         }
         _ => {}
     }
-
-    Ok(())
 }
 
 impl ChannelMarbleState {
@@ -187,7 +185,7 @@ impl ChannelMarbleState {
         app_params: &AppParams,
         message: &str,
         client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
-    ) -> anyhow::Result<()> {
+    ) {
         self.current_position = (self.current_position + 1) % app_params.buffer_size;
         let is_play_message = message.starts_with("!play");
         self.buffer[self.current_position] = is_play_message;
@@ -195,21 +193,21 @@ impl ChannelMarbleState {
             self.next_play = Instant::now().add(app_params.delay);
             self.clear_buffer();
             thread::sleep(app_params.wait);
-            self.say_play(client, app_params).await?;
+            self.say_play(client, app_params).await;
         }
-
-        Ok(())
     }
 
     async fn say_play(
         self: &mut ChannelMarbleState,
         client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
         app_params: &AppParams,
-    ) -> anyhow::Result<()> {
-        client
+    ) {
+        if let Err(error) = client
             .say(self.login.to_owned(), app_params.play_message.to_owned())
-            .await?;
-        Ok(())
+            .await
+        {
+            println!("could not say join, because: {}", error);
+        }
     }
 
     fn is_time_to_play(self: &ChannelMarbleState) -> bool {
