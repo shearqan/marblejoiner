@@ -187,7 +187,7 @@ impl ChannelMarbleState {
         client: &TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>,
     ) {
         self.current_position = (self.current_position + 1) % app_params.buffer_size;
-        let is_play_message = message.starts_with("!play");
+        let is_play_message = message.to_lowercase().starts_with("!play");
         self.buffer[self.current_position] = is_play_message;
         if is_play_message && self.is_time_to_play() && self.is_treshhold_reached(app_params) {
             self.next_play = Instant::now().add(app_params.delay);
